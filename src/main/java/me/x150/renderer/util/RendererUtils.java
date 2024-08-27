@@ -14,6 +14,7 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NotNull;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
@@ -139,6 +140,47 @@ public class RendererUtils {
 		Vector4f vec = new Vector4f((float) in.x, (float) in.y, (float) in.z, 1);
 		vec.mul(matrix);
 		return new Vec3d(vec.x(), vec.y(), vec.z());
+	}
+
+	public static @NotNull NativeImageBackedTexture bufferedImageToNIBT(@NotNull BufferedImage bi) {
+		// argb from BufferedImage is little endian, alpha is actually where the `a` is in the label
+		// rgba from NativeImage (and by extension opengl) is big endian, alpha is on the other side (abgr)
+		// thank you opengl
+		int ow = bi.getWidth();
+		int oh = bi.getHeight();
+		NativeImage image = new NativeImage(NativeImage.Format.RGBA, ow, oh, false);
+		@SuppressWarnings("DataFlowIssue") long ptr = ((NativeImageAccessor) (Object) image).getPointer();
+		IntBuffer backingBuffer = MemoryUtil.memIntBuffer(ptr, image.getWidth() * image.getHeight());
+		int off = 0;
+		Object _d;
+		WritableRaster raster = bi.getRaster();
+		ColorModel colorModel = bi.getColorModel();
+		int nbands = raster.getNumBands();
+		int dataType = raster.getDataBuffer().getDataType();
+		_d = switch (dataType) {
+			case DataBuffer.TYPE_BYTE -> new byte[nbands];
+			case DataBuffer.TYPE_USHORT -> new short[nbands];
+			case DataBuffer.TYPE_INT -> new int[nbands];
+			case DataBuffer.TYPE_FLOAT -> new float[nbands];
+			case DataBuffer.TYPE_DOUBLE -> new double[nbands];
+			default -> throw new IllegalArgumentException("Unknown data buffer type: " +
+					dataType);
+		};
+
+		for (int y = 0; y < oh; y++) {
+			for (int x = 0; x < ow; x++) {
+				raster.getDataElements(x, y, _d);
+				int a = colorModel.getAlpha(_d);
+				int r = colorModel.getRed(_d);
+				int g = colorModel.getGreen(_d);
+				int b = colorModel.getBlue(_d);
+				int abgr = a << 24 | b << 16 | g << 8 | r;
+				backingBuffer.put(abgr);
+			}
+		}
+		NativeImageBackedTexture tex = new NativeImageBackedTexture(image);
+		tex.upload();
+		return tex;
 	}
 
 	/**
